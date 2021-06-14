@@ -1,5 +1,3 @@
-from numpy import fabs
-from numpy.lib.stride_tricks import broadcast_arrays
 import pandas as pd
 import tushare as ts
 from datetime import date
