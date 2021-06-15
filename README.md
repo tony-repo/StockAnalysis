@@ -2,6 +2,10 @@
 
 Select proper stock
 
+## Prerequisite
+
+Need to get token from https://tushare.pro/
+
 ## Data Collection
 
 This module use python to get stock data from TuShare
