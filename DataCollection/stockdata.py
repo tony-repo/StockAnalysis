@@ -4,18 +4,40 @@ from datetime import date
 from datetime import timedelta  
 import os
 import time
-import openpyxl as excel
+import openpyxl
 import logging
-from tushare import stock
+import produceStockDataHelper
+import threading
 
 # global data
 basePath = "./Data/"
-ts.set_token("1f5165bdff484296cd7c9bdfd3138b597dab5d7478139dbf38326439")
+
+
+
 pro = ts.pro_api()
 filePath = "./History/" + date.today().strftime("%Y%m%d") + ".xlsx"
 
 historyPath = "History"
 dataPath = "Data"
+
+threads = []
+lock = threading.Lock()
+
+consumer1 = produceStockDataHelper.consumerThread(1,"Consumer1")
+consumer2 = produceStockDataHelper.consumerThread(2,"Consumer2")
+consumer3 = produceStockDataHelper.consumerThread(3,"Consumer3")
+consumer4 = produceStockDataHelper.consumerThread(4,"Consumer4")
+
+consumer1.start()
+consumer2.start()
+consumer3.start()
+consumer4.start()
+
+threads.append(consumer1)
+threads.append(consumer2)
+threads.append(consumer3)
+threads.append(consumer4)
+
 
 # Shanghai - 600,601,603
 # Shenzhen - 000
@@ -28,6 +50,15 @@ def contactStockCode(number):
                 "68":number+'.SH',
             }
     return  switcher.get(number[0:2],"")
+
+def getProperToken(number):
+    switcher={
+            "0":tonyToken,
+            "1":cymToken,
+            "2":zhugeToken,
+            "3":douziToken,
+        }
+    return  switcher.get(number,tonyToken)
 
 def getStockScore(stockInfo):
     highPrice = stockInfo['high']
@@ -91,6 +122,78 @@ def exportToExcel(data):
     print(df)
     df.to_excel(filePath, index=False)
 
+def prepareStockData(stockNumbers, token, filename):
+    ts.set_token(token)
+     # get data form tu share for every stock
+    latestTradingDate = getLatestTradingDate(date.today())
+    pastDate = latestTradingDate - timedelta(days=365)  
+    totalScores = 0
+    totalStocks = 0
+    suspendStocks = ""
+    exceptionStocks = ""       
+    total = len(stockNumbers)
+
+    for number in stockNumbers:                    
+        stockCode = contactStockCode(number)
+        if len(stockCode) == 0:
+            msg = "Can not find corresponding stock code: " + str(number)
+            print(msg)
+            logging.warning(msg)
+            continue
+
+        print('begin to deal with board name: '+ filename + " ,stock code:" + str(stockCode) + ", total stocks: " + str(total) + ", remain: "+ str(total - totalStocks)) 
+        logging.info('begin to deal with board name: '+ filename + " ,stock code:" + str(stockCode) + ", total stocks: " + str(total) + ", remain: "+ str(total - totalStocks)) 
+        
+        retryCount = 0
+        needRetry = True
+        while(((retryCount < 3) and needRetry)):
+            try:
+                # check if suspend, we need to ignore it                
+                suspend = pro.suspend(ts_code=stockCode, suspend_date=latestTradingDate.strftime("%Y%m%d"), resume_date='', fields='')                
+
+                if(suspend.empty == False):
+                    suspendStocks += stockCode + ','
+                    continue
+
+                df = ts.pro_bar(ts_code=stockCode, start_date=pastDate.strftime("%Y%m%d"), end_date=latestTradingDate.strftime("%Y%m%d"), ma=[5, 13, 21, 34, 55, 89, 144, 233])   
+
+                if(df.empty == False):
+                    totalScores += getStockScore(df.iloc[[0]])
+                    totalStocks += 1
+                else :
+                    exceptionStocks += stockCode + ','
+                time.sleep(0.010)
+                needRetry = False
+                
+            except Exception as e:    
+                retryCount += 1
+                needRetry = True                            
+                time.sleep(1)
+                print("Begin to retry current stock: " + str(stockCode) + ", Retry count: " + str(retryCount))
+                logging.info("Begin to retry current stock: " + str(stockCode) + ", Retry count: " + str(retryCount))                            
+
+    boardScores = 0
+    if(totalStocks != 0):
+        boardScores = totalScores/totalStocks  
+    else:
+        logging.warning("Can not get any stocks with board name: " + str(filename))
+
+    key = getUniqueKey(boardScores, result)    
+    
+    try:
+        lock.acquire()            
+        result[key] = [filename, str(round(boardScores,2))]           
+    finally:
+        lock.release()
+
+    if len(suspendStocks) != 0:
+        logging.info("Board: "+filename+", These are suspend stocks for"+ suspendStocks)
+
+    if len(exceptionStocks) != 0:
+        logging.info( "Board: "+filename+", These are the exception stocks: " + exceptionStocks)  
+
+    logging.info("End with board name:" + str(filename))   
+
 # config logging
 LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
 logFileName = "stockdata_"+ date.today().strftime("%Y%m%d")+".log"
@@ -112,7 +215,7 @@ totalBoardAcountLog = totalBoardAcount
 with os.scandir(basePath) as entries:
     result = dict()
     try:
-
+        count = 1
         for entry in entries:
             with open(basePath+entry.name) as f:                    
                 logging.info("Begin with board name:" + str(f.name)+ ", remain count: " +  str(totalBoardAcountLog))
@@ -121,73 +224,31 @@ with os.scandir(basePath) as entries:
 
                 content = f.read()
                 stockNumbers = content.split(',')
-                # get data form tu share for every stock
-                latestTradingDate = getLatestTradingDate(date.today())
-                pastDate = latestTradingDate - timedelta(days=365)  
-                totalScores = 0
-                totalStocks = 0
-                suspendStocks = ""
-                exceptionStocks = ""       
-                total = len(stockNumbers)
+         
+                token = getProperToken(count % 4)
 
-                for number in stockNumbers:                    
-                    stockCode = contactStockCode(number)
-                    if len(stockCode) == 0:
-                        msg = "Can not find corresponding stock code: " + str(number)
-                        print(msg)
-                        logging.warning(msg)
-                        continue
+                data = []
+                data.append(prepareStockData)
+                data.append(stockNumbers)
+                data.append(token)
+                data.append(f.name)
 
-                    print('begin to deal with board name: '+ f.name + " ,stock code:" + str(stockCode) + ", total stocks: " + str(total) + ", remain: "+ str(total - totalStocks)) 
-                    logging.info('begin to deal with board name: '+ f.name + " ,stock code:" + str(stockCode) + ", total stocks: " + str(total) + ", remain: "+ str(total - totalStocks)) 
-                    
-                    retryCount = 0
-                    needRetry = True
-                    while(((retryCount < 3) and needRetry)):
-                        try:
-                            # check if suspend, we need to ignore it                
-                            suspend = pro.suspend(ts_code=stockCode, suspend_date=latestTradingDate.strftime("%Y%m%d"), resume_date='', fields='')                
-            
-                            if(suspend.empty == False):
-                                suspendStocks += stockCode + ','
-                                continue
-
-                            df = ts.pro_bar(ts_code=stockCode, start_date=pastDate.strftime("%Y%m%d"), end_date=latestTradingDate.strftime("%Y%m%d"), ma=[5, 13, 21, 34, 55, 89, 144, 233])   
-
-                            if(df.empty == False):
-                                totalScores += getStockScore(df.iloc[[0]])
-                                totalStocks += 1
-                            else :
-                                exceptionStocks += stockCode + ','
-                            time.sleep(0.010)
-                            needRetry = False
-                            
-                        except Exception as e:    
-                            retryCount += 1
-                            needRetry = True                            
-                            time.sleep(1)
-                            print("Begin to retry current stock: " + str(stockCode) + ", Retry count: " + str(retryCount))
-                            logging.info("Begin to retry current stock: " + str(stockCode) + ", Retry count: " + str(retryCount))                            
-
-                boardScores = 0
-                if(totalStocks != 0):
-                    boardScores = totalScores/totalStocks  
-                else:
-                    logging.warning("Can not get any stocks with board name: " + str(f.name))
-
-                key = getUniqueKey(boardScores, result)                
-                result[key] = [f.name, str(round(boardScores,2))]   
-                
-                if len(suspendStocks) != 0:
-                    logging.info("Board: "+f.name+", These are suspend stocks for"+ suspendStocks)
-
-                if len(exceptionStocks) != 0:
-                    logging.info( "Board: "+f.name+", These are the exception stocks: " + exceptionStocks)  
-
-                logging.info("End with board name:" + str(f.name))              
-
+                produceStockDataHelper.Produce(data)
+                          
     except Exception as e:        
-        logging.error("Run script failed: ", e)              
+        logging.error("Run script failed: ", e) 
+        exitFlag = 1
+
+    # 等待队列清空
+    while not produceStockDataHelper.workQueue.empty():
+        pass
+
+    # 通知线程是时候退出
+    produceStockDataHelper.exitFlag = 1
+
+    # 等待所有线程完成
+    for t in threads:
+        t.join()                 
 
     printResult(result)
     print("We already run "+str(len(result))+" module")
