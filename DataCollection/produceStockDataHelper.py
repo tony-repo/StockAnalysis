@@ -8,7 +8,6 @@ workQueue = queue.Queue()
 def Produce(data):        
     workQueue.put(data,block=False)             
     
-
 class consumerThread (threading.Thread):
     def __init__(self, threadID, name):
         threading.Thread.__init__(self)
@@ -23,8 +22,7 @@ class consumerThread (threading.Thread):
 def consumer_data(threadName):
     #while not exitFlag:  
     while not exitFlag:  
-        try:
-            print("Begin to work with thread: " + threadName)
+        try:            
             queueLock.acquire()                 
             if not workQueue.empty():   
                 

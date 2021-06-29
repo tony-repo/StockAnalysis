@@ -4,40 +4,21 @@ from datetime import date
 from datetime import timedelta  
 import os
 import time
-import openpyxl
 import logging
 import produceStockDataHelper
 import threading
+from pytdx.hq import TdxHq_API
+from pytdx.hq import TDXParams
 
 # global data
 basePath = "./Data/"
 
-
-
 pro = ts.pro_api()
+api = TdxHq_API()
 filePath = "./History/" + date.today().strftime("%Y%m%d") + ".xlsx"
 
 historyPath = "History"
 dataPath = "Data"
-
-threads = []
-lock = threading.Lock()
-
-consumer1 = produceStockDataHelper.consumerThread(1,"Consumer1")
-consumer2 = produceStockDataHelper.consumerThread(2,"Consumer2")
-consumer3 = produceStockDataHelper.consumerThread(3,"Consumer3")
-consumer4 = produceStockDataHelper.consumerThread(4,"Consumer4")
-
-consumer1.start()
-consumer2.start()
-consumer3.start()
-consumer4.start()
-
-threads.append(consumer1)
-threads.append(consumer2)
-threads.append(consumer3)
-threads.append(consumer4)
-
 
 # Shanghai - 600,601,603
 # Shenzhen - 000
@@ -162,15 +143,15 @@ def prepareStockData(stockNumbers, token, filename):
                     totalStocks += 1
                 else :
                     exceptionStocks += stockCode + ','
-                time.sleep(0.010)
+                time.sleep(0.05)
                 needRetry = False
                 
             except Exception as e:    
                 retryCount += 1
                 needRetry = True                            
-                time.sleep(1)
+                time.sleep(5)
                 print("Begin to retry current stock: " + str(stockCode) + ", Retry count: " + str(retryCount))
-                logging.info("Begin to retry current stock: " + str(stockCode) + ", Retry count: " + str(retryCount))                            
+                logging.exception(e)
 
     boardScores = 0
     if(totalStocks != 0):
@@ -194,11 +175,40 @@ def prepareStockData(stockNumbers, token, filename):
 
     logging.info("End with board name:" + str(filename))   
 
+def getBlockFile(blockNumber):
+    switcher={
+        "0":TDXParams.BLOCK_DEFAULT,
+        "1":TDXParams.BLOCK_FG,
+        "2":TDXParams.BLOCK_GN,
+        "3":TDXParams.BLOCK_SZ,            
+    }
+    return  switcher.get(blockNumber,TDXParams.BLOCK_GN)
+
+def getBlockInfos(blockNumber):    
+    blockFile = getBlockFile(blockNumber)
+    with api.connect('119.147.212.81', 7709):
+        data = api.get_and_parse_block_info(blockFile)    
+        df = pd.DataFrame(data)
+        fileName = ""
+        codelist = ""
+        for index, row in df.iterrows():
+            if(row["code_index"] == 0):
+                if(fileName != ''):
+                    # export to excel
+                    fh = open(fileName,'w', encoding='utf-8')
+                    fh.write(codelist.strip(','))
+                    fh.close()
+                    print("current board is completed: "+ fileName)
+
+                fileName = basePath + str(row["blockname"]) + ".txt"
+                codelist = ""
+            
+            codelist = codelist + row['code'] + ','    
+
 # config logging
 LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
 logFileName = "stockdata_"+ date.today().strftime("%Y%m%d")+".log"
 logging.basicConfig(filename=logFileName, level=logging.INFO, format=LOG_FORMAT)
-
 print("Begin to deal with Stocks..............")
 if(os.path.exists(historyPath) == False):
     os.mkdir(historyPath)
@@ -206,7 +216,32 @@ if(os.path.exists(historyPath) == False):
 if(os.path.exists(dataPath) == False):
     os.mkdir(dataPath)
 
-files =os.listdir(basePath)
+needRefreshBoardInfo = input("Do you want to refresh Board infos? Y or N \n")
+if(needRefreshBoardInfo == "Y" or needRefreshBoardInfo == "y"):
+    blockNumber = input("Please select board info:\n 0: BLOCK_DEFAULT \n 1: BLOCK_FG\n 2: BLOCK_GN\n 3: BLOCK_SZ\n")
+    getBlockInfos(blockNumber)    
+
+threads = []
+lock = threading.Lock()
+
+consumer1 = produceStockDataHelper.consumerThread(1,"Consumer1")
+consumer2 = produceStockDataHelper.consumerThread(2,"Consumer2")
+consumer3 = produceStockDataHelper.consumerThread(3,"Consumer3")
+consumer4 = produceStockDataHelper.consumerThread(4,"Consumer4")
+
+consumer1.start()
+consumer2.start()
+consumer3.start()
+consumer4.start()
+
+threads.append(consumer1)
+threads.append(consumer2)
+threads.append(consumer3)
+threads.append(consumer4)
+
+
+
+files = os.listdir(basePath)
 totalBoardAcount = len(files)
 logging.info("Board Total Account:" + str(totalBoardAcount))
 print("Board Total Account:" + str(totalBoardAcount))
@@ -239,14 +274,14 @@ with os.scandir(basePath) as entries:
         logging.error("Run script failed: ", e) 
         exitFlag = 1
 
-    # 等待队列清空
+    # wait for queue is empty
     while not produceStockDataHelper.workQueue.empty():
         pass
 
-    # 通知线程是时候退出
+    # exit thread
     produceStockDataHelper.exitFlag = 1
 
-    # 等待所有线程完成
+    # wait for all threads are done
     for t in threads:
         t.join()                 
 
