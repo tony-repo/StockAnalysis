@@ -8,6 +8,10 @@ Need to get token from https://tushare.pro/
 
 ## Data Collection
 
+We will use pytdx library to get Board infos
+
+> Interface instruction: https://github.com/peter159/pytdx-1
+
 This module use python to get stock data from TuShare
 
 > We need to install below package before we run it
