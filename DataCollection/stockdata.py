@@ -13,12 +13,13 @@ from pytdx.hq import TDXParams
 # global data
 basePath = "./Data/"
 
-pro = ts.pro_api()
+
 api = TdxHq_API()
 filePath = "./History/" + date.today().strftime("%Y%m%d") + ".xlsx"
 
 historyPath = "History"
 dataPath = "Data"
+
 
 # Shanghai - 600,601,603
 # Shenzhen - 000
@@ -78,7 +79,7 @@ def getStockScore(stockInfo):
     # lower than ma5 prive
     return 1
 
-def getLatestTradingDate(tradingDate):
+def getLatestTradingDate(tradingDate, pro):
     df = pro.trade_cal(exchange='SSE', start_date=tradingDate.strftime("%Y%m%d"), end_date=tradingDate.strftime("%Y%m%d"))
     isOpen = df.iloc[[0]]['is_open'] == 1
     if(isOpen.bool()):
@@ -105,8 +106,9 @@ def exportToExcel(data):
 
 def prepareStockData(stockNumbers, token, filename):
     ts.set_token(token)
+    pro = ts.pro_api()
      # get data form tu share for every stock
-    latestTradingDate = getLatestTradingDate(date.today())
+    latestTradingDate = getLatestTradingDate(date.today(), pro)
     pastDate = latestTradingDate - timedelta(days=365)  
     totalScores = 0
     totalStocks = 0
